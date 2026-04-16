@@ -9,7 +9,7 @@
 SELECT 
     genre,
     COUNT(*) AS high_rated_count
-FROM imdb_rating.imdb_1000
+FROM imdb_1000
 WHERE star_rating >= 8.0
 GROUP BY genre
 ORDER BY high_rated_count DESC
@@ -20,7 +20,7 @@ LIMIT 1;
 SELECT 
     genre,
     COUNT(*) AS total_movies
-FROM imdb_rating.imdb_1000
+FROM imdb_1000
 GROUP BY genre
 ORDER BY total_movies DESC
 LIMIT 1;
@@ -30,7 +30,7 @@ LIMIT 1;
 SELECT 
     genre,
     SUM(duration) AS total_duration_mins
-FROM imdb_rating.imdb_1000
+FROM imdb_1000
 GROUP BY genre
 ORDER BY total_duration_mins DESC
 LIMIT 1;
@@ -40,7 +40,7 @@ LIMIT 1;
 SELECT 
     genre,
     ROUND(AVG(duration), 2) AS avg_duration_mins
-FROM imdb_rating.imdb_1000
+FROM imdb_1000
 GROUP BY genre
 ORDER BY avg_duration_mins DESC;
 
@@ -55,7 +55,7 @@ FROM (
         genre,
         ROUND(AVG(star_rating), 2) AS avg_rating,
         RANK() OVER (ORDER BY AVG(star_rating) DESC) AS genre_rank
-    FROM imdb_rating.imdb_1000
+    FROM imdb_1000
     GROUP BY genre
 ) ranked_genres
 WHERE genre = 'Mystery';
@@ -66,7 +66,7 @@ SELECT
     title,
     genre,
     star_rating
-FROM imdb_rating.imdb_1000
+FROM imdb_1000
 ORDER BY star_rating DESC
 LIMIT 10;
 
@@ -74,7 +74,7 @@ LIMIT 10;
 -- 7. Movies Brad Pitt worked in with rating > 8
 SELECT 
     COUNT(*) AS brad_pitt_movies
-FROM imdb_rating.imdb_1000
+FROM imdb_1000
 WHERE actors_list LIKE '%Brad Pitt%'
   AND star_rating > 8;
 
@@ -82,7 +82,7 @@ WHERE actors_list LIKE '%Brad Pitt%'
 -- 8. PG-13 rated movies in the Crime genre
 SELECT 
     COUNT(*) AS pg13_crime_movies
-FROM imdb_rating.imdb_1000
+FROM imdb_1000
 WHERE content_rating = 'PG-13'
   AND genre = 'Crime';
 
@@ -95,7 +95,7 @@ FROM (
         title,
         genre,
         star_rating
-    FROM imdb_rating.imdb_1000
+    FROM imdb_1000
     ORDER BY star_rating DESC
     LIMIT 10
 ) top10
@@ -113,7 +113,88 @@ FROM (
         title,
         star_rating,
         RANK() OVER (PARTITION BY genre ORDER BY star_rating DESC) AS rnk
-    FROM imdb_rating.imdb_1000
+    FROM imdb_1000
 ) ranked
 WHERE rnk = 1
 ORDER BY star_rating DESC;
+
+-- 11. Genres whose avg rating is above the overall dataset average
+WITH genre_avg AS (
+    SELECT genre, ROUND(AVG(star_rating), 2) AS avg_rating
+    FROM imdb_1000
+    GROUP BY genre
+),
+overall_avg AS (
+    SELECT ROUND(AVG(star_rating), 2) AS overall
+    FROM imdb_1000
+)
+SELECT
+    g.genre,
+    g.avg_rating,
+    o.overall AS overall_avg,
+    ROUND(g.avg_rating - o.overall, 2) AS difference
+FROM genre_avg g
+CROSS JOIN overall_avg o
+WHERE g.avg_rating > o.overall
+ORDER BY difference DESC;
+
+-- 12. Most "consistent" genre (lowest standard deviation in ratings)
+--    Low STDDEV = genre reliably produces good movies
+SELECT
+    genre,
+    ROUND(AVG(star_rating), 2)    AS avg_rating,
+    ROUND(STDDEV(star_rating), 4) AS rating_stddev,
+    COUNT(*)                      AS total_movies
+FROM imdb_1000
+GROUP BY genre
+HAVING COUNT(*) >= 10
+ORDER BY rating_stddev ASC;
+
+-- 13. Find the longest movie in each genre
+--     AND how much longer it is than that genre's average
+WITH genre_stats AS (
+    SELECT
+        genre,
+        ROUND(AVG(duration), 0) AS avg_duration,
+        MAX(duration)           AS max_duration
+    FROM imdb_1000
+    GROUP BY genre
+)
+SELECT
+    m.title,
+    m.genre,
+    m.duration,
+    gs.avg_duration,
+    (m.duration - gs.avg_duration) AS mins_above_avg
+FROM imdb_1000 m
+JOIN genre_stats gs ON m.genre = gs.genre
+WHERE m.duration = gs.max_duration
+ORDER BY mins_above_avg DESC;
+
+-- 14. Movies that are rated HIGHER than their genre's average
+--    (above-average performers in their category)
+SELECT
+    title,
+    genre,
+    star_rating,
+    ROUND(AVG(star_rating) OVER (PARTITION BY genre), 2) AS genre_avg,
+    ROUND(star_rating - AVG(star_rating) OVER (PARTITION BY genre), 2) AS above_avg_by
+FROM imdb_1000
+WHERE star_rating > (
+    SELECT AVG(star_rating) FROM imdb_1000 i2
+    WHERE i2.genre = imdb_1000.genre
+)
+ORDER BY above_avg_by DESC;
+
+-- 15. Top 3 movies per genre 
+SELECT genre, title, star_rating, rnk
+FROM (
+    SELECT
+        genre,
+        title,
+        star_rating,
+        DENSE_RANK() OVER (PARTITION BY genre ORDER BY star_rating DESC) AS rnk
+    FROM imdb_1000
+) ranked
+WHERE rnk <= 3
+ORDER BY genre, rnk;
